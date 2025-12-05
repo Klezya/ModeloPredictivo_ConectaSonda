@@ -1,0 +1,108 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Permite ejecutar manualmente
+
+env:
+  EC2_HOST: ec2-54-233-81-151.sa-east-1.compute.amazonaws.com
+  EC2_USER: ec2-user
+  APP_DIR: /home/ec2-user/app
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          python -c "from main import app; print('✅ Backend imports OK')"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+        env:
+          VITE_API_URL: http://localhost:8000
+          VITE_ADMIN_USER: test
+          VITE_ADMIN_PASSWORD: test
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          # Sync code to EC2
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '__pycache__' \
+            --exclude '.env' \
+            --exclude '*.pyc' \
+            ./ ${{ env.EC2_USER }}@${{ env.EC2_HOST }}:${{ env.APP_DIR }}/
+
+          # Build and restart containers
+          ssh ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'ENDSSH'
+            cd ${{ env.APP_DIR }}
+            
+            # Build with environment variables
+            docker compose build --no-cache \
+              --build-arg VITE_API_URL=${{ secrets.VITE_API_URL }} \
+              --build-arg VITE_ADMIN_USER=${{ secrets.VITE_ADMIN_USER }} \
+              --build-arg VITE_ADMIN_PASSWORD=${{ secrets.VITE_ADMIN_PASSWORD }}
+            
+            # Restart containers
+            docker compose down
+            docker compose up -d
+            
+            # Clean up old images
+            docker image prune -f
+            
+            echo "✅ Deployment completed!"
+          ENDSSH
+
+      - name: Health Check
+        run: |
+          sleep 15
+          curl -f http://${{ env.EC2_HOST }}/api/health || exit 1
+          echo "✅ Health check passed!"

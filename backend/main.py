@@ -1,20 +1,38 @@
-from fastapi import FastAPI, HTTPException
+import os
+import random
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-import random
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Cliente de Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(
     title="ConectaSonda API",
-    description="API para el Sistema Predictivo de Fallas - Torniquetes y Transbank",
-    version="1.0.0"
+    description="API para el Sistema Predictivo de Fallas - Equipos de Borde",
+    version="2.0.0"
 )
 
-# CORS para conectar con el frontend
+# CORS para conectar con el frontend (desarrollo y producción)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # Docker frontend
+        "http://localhost:80",    # Docker frontend alt
+        "http://localhost",       # Docker frontend sin puerto
+        "http://frontend",        # Docker internal network
+        "*",  # Permitir cualquier origen (para AWS y otros deployments)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,27 +71,98 @@ class MaintenanceRequest(BaseModel):
     maintenance_type: str
     notes: Optional[str] = None
 
-# ============== DATOS SIMULADOS ==============
+# ============== FUNCIONES AUXILIARES SUPABASE ==============
 
-equipments_db = [
-    {"id": 1, "name": "Torniquete T-001", "type": "torniquete", "location": "Estación Central - Acceso Norte", "status": "operativo", "last_maintenance": "2024-11-15", "last_failure": "2024-11-20", "failure_count": 3, "uptime": 98.5},
-    {"id": 2, "name": "Torniquete T-002", "type": "torniquete", "location": "Estación Central - Acceso Sur", "status": "operativo", "last_maintenance": "2024-11-20", "last_failure": "2024-12-01", "failure_count": 1, "uptime": 99.2},
-    {"id": 3, "name": "Transbank TB-001", "type": "transbank", "location": "Estación Central - Hall Principal", "status": "falla", "last_maintenance": "2024-10-30", "last_failure": "2024-12-04", "failure_count": 5, "uptime": 94.1},
-    {"id": 4, "name": "Torniquete T-003", "type": "torniquete", "location": "Estación Los Héroes - Acceso Este", "status": "mantenimiento", "last_maintenance": "2024-12-04", "last_failure": "2024-11-15", "failure_count": 2, "uptime": 97.8},
-    {"id": 5, "name": "Transbank TB-002", "type": "transbank", "location": "Estación Los Héroes - Boletería", "status": "operativo", "last_maintenance": "2024-11-25", "last_failure": "2024-10-28", "failure_count": 2, "uptime": 96.5},
-    {"id": 6, "name": "Torniquete T-004", "type": "torniquete", "location": "Estación Baquedano - Acceso Principal", "status": "operativo", "last_maintenance": "2024-11-28", "last_failure": "2024-11-30", "failure_count": 1, "uptime": 99.0},
-    {"id": 7, "name": "Transbank TB-003", "type": "transbank", "location": "Estación Baquedano - Autoservicio", "status": "operativo", "last_maintenance": "2024-11-10", "last_failure": "2024-11-10", "failure_count": 4, "uptime": 95.3},
-    {"id": 8, "name": "Torniquete T-005", "type": "torniquete", "location": "Estación Tobalaba - Acceso Oriente", "status": "falla", "last_maintenance": "2024-10-15", "last_failure": "2024-12-04", "failure_count": 6, "uptime": 92.1},
-]
+def get_equipments_from_supabase(equipment_type: Optional[str] = None, limit: int = 100):
+    """Obtiene equipos únicos desde Supabase"""
+    query = supabase.table('equipos_borde').select('*')
+    
+    if equipment_type and equipment_type != "all":
+        # Mapear tipo a valor en BD
+        tipo_map = {"torniquete": "Torniquete", "transbank": "Transbank"}
+        query = query.eq('TIPO_EQUIPO', tipo_map.get(equipment_type, equipment_type))
+    
+    result = query.limit(limit).execute()
+    
+    # Agrupar por ID_EQUIPO para obtener equipos únicos con su último registro
+    equipos_dict = {}
+    for row in result.data:
+        equipo_id = row.get('ID_EQUIPO')
+        if equipo_id not in equipos_dict:
+            # Determinar estado basado en datos
+            falla_tipo = row.get('FALLA_TIPO', 'Ninguna')
+            dias_mant = row.get('DIAS_DESDE_ULTIMO_MANT', 0)
+            
+            if falla_tipo and falla_tipo != 'Ninguna':
+                status = 'falla'
+            elif dias_mant and dias_mant > 180:
+                status = 'mantenimiento'
+            else:
+                status = 'operativo'
+            
+            # Calcular uptime basado en anomalías (ANOMALIA_USO es un float, valores altos = anomalía)
+            anomalia_uso = row.get('ANOMALIA_USO', 0) or 0
+            uptime = 95.0 if abs(anomalia_uso) > 10 else 98.5
+            
+            # Mapear tipo: 'máquina autoservicio' -> 'transbank'
+            tipo_equipo = row.get('TIPO_EQUIPO', 'torniquete').lower()
+            if 'autoservicio' in tipo_equipo:
+                tipo_equipo = 'transbank'
+            
+            equipos_dict[equipo_id] = {
+                "id": row.get('id'),
+                "name": equipo_id,
+                "type": tipo_equipo,
+                "location": row.get('ESTACION', 'Sin ubicación'),
+                "status": status,
+                "last_maintenance": str(row.get('FECHA_HORA', ''))[:10],
+                "last_failure": str(row.get('FECHA_HORA', ''))[:10] if falla_tipo != 'Ninguna' else 'N/A',
+                "failure_count": 1 if falla_tipo != 'Ninguna' else 0,
+                "uptime": uptime
+            }
+    
+    return list(equipos_dict.values())
 
-failures_history_db = [
-    {"id": 1, "date": "2024-12-04", "equipment": "Transbank TB-001", "resolved": False},
-    {"id": 2, "date": "2024-12-04", "equipment": "Torniquete T-005", "resolved": False},
-    {"id": 3, "date": "2024-12-03", "equipment": "Torniquete T-002", "resolved": True},
-    {"id": 4, "date": "2024-12-02", "equipment": "Transbank TB-003", "resolved": True},
-    {"id": 5, "date": "2024-12-01", "equipment": "Torniquete T-001", "resolved": True},
-    {"id": 6, "date": "2024-11-30", "equipment": "Torniquete T-004", "resolved": True},
-]
+def get_failures_from_supabase(limit: int = 50):
+    """Obtiene historial de fallas únicas por equipo desde Supabase"""
+    result = supabase.table('equipos_borde').select('*').neq('FALLA_TIPO', 'Ninguna').order('FECHA_HORA', desc=True).limit(500).execute()
+    
+    # Agrupar por equipo, quedarnos solo con la falla más reciente de cada uno
+    equipos_vistos = set()
+    failures = []
+    
+    for row in result.data:
+        equipo_id = row.get('ID_EQUIPO', 'Desconocido')
+        if equipo_id not in equipos_vistos:
+            equipos_vistos.add(equipo_id)
+            failures.append({
+                "id": len(failures) + 1,
+                "date": str(row.get('FECHA_HORA', ''))[:10],
+                "equipment": equipo_id,
+                "resolved": False
+            })
+            if len(failures) >= limit:
+                break
+    
+    return failures
+
+def get_metrics_from_supabase():
+    """Calcula métricas desde Supabase basado en equipos únicos"""
+    equipments = get_equipments_from_supabase(limit=1000)
+    
+    total_equipments = len(equipments)
+    operativos = len([e for e in equipments if e["status"] == "operativo"])
+    con_falla = len([e for e in equipments if e["status"] == "falla"])
+    en_mantenimiento = len([e for e in equipments if e["status"] == "mantenimiento"])
+    
+    return {
+        "total_equipments": total_equipments,
+        "active_alerts": operativos,
+        "predicted_failures": con_falla,
+        "maintenance_scheduled": en_mantenimiento,
+        "system_accuracy": 94.5,
+        "avg_response_time": "96.8%"
+    }
 
 # ============== ENDPOINTS ==============
 
@@ -83,66 +172,91 @@ def root():
 
 @app.get("/api/health")
 def health_check():
+    # Verificar conexión a Supabase
+    try:
+        result = supabase.table('equipos_borde').select('id').limit(1).execute()
+        db_status = "online" if result.data else "degraded"
+    except Exception:
+        db_status = "offline"
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "online" else "degraded",
         "timestamp": datetime.now().isoformat(),
         "services": {
             "api": "online",
             "ml_model": "online",
-            "database": "online"
+            "database": db_status
         }
     }
 
 # Métricas del Dashboard
 @app.get("/api/metrics", response_model=Metric)
 def get_metrics():
-    operativos = len([e for e in equipments_db if e["status"] == "operativo"])
-    con_falla = len([e for e in equipments_db if e["status"] == "falla"])
-    en_mantenimiento = len([e for e in equipments_db if e["status"] == "mantenimiento"])
-    
-    return {
-        "total_equipments": len(equipments_db),
-        "active_alerts": con_falla,
-        "predicted_failures": con_falla + en_mantenimiento,
-        "maintenance_scheduled": en_mantenimiento,
-        "system_accuracy": 94.5,
-        "avg_response_time": "96.8%"
-    }
+    return get_metrics_from_supabase()
 
 # Equipos
 @app.get("/api/equipments", response_model=List[Equipment])
 def get_equipments(equipment_type: Optional[str] = None):
-    if equipment_type and equipment_type != "all":
-        return [e for e in equipments_db if e["type"] == equipment_type]
-    return equipments_db
+    return get_equipments_from_supabase(equipment_type)
 
 @app.get("/api/equipments/{equipment_id}", response_model=Equipment)
 def get_equipment(equipment_id: int):
-    equipment = next((e for e in equipments_db if e["id"] == equipment_id), None)
-    if not equipment:
+    result = supabase.table('equipos_borde').select('*').eq('id', equipment_id).limit(1).execute()
+    if not result.data:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
-    return equipment
+    
+    row = result.data[0]
+    falla_tipo = row.get('FALLA_TIPO', 'Ninguna')
+    dias_mant = row.get('DIAS_DESDE_ULTIMO_MANT', 0)
+    
+    if falla_tipo and falla_tipo != 'Ninguna':
+        status = 'falla'
+    elif dias_mant and dias_mant > 180:
+        status = 'mantenimiento'
+    else:
+        status = 'operativo'
+    
+    anomalia_uso = row.get('ANOMALIA_USO', 0) or 0
+    
+    # Mapear tipo: 'máquina autoservicio' -> 'transbank'
+    tipo_equipo = row.get('TIPO_EQUIPO', 'torniquete').lower()
+    if 'autoservicio' in tipo_equipo:
+        tipo_equipo = 'transbank'
+    
+    return {
+        "id": row.get('id'),
+        "name": row.get('ID_EQUIPO'),
+        "type": tipo_equipo,
+        "location": row.get('ESTACION', 'Sin ubicación'),
+        "status": status,
+        "last_maintenance": str(row.get('FECHA_HORA', ''))[:10],
+        "last_failure": str(row.get('FECHA_HORA', ''))[:10] if falla_tipo != 'Ninguna' else 'N/A',
+        "failure_count": 1 if falla_tipo != 'Ninguna' else 0,
+        "uptime": 95.0 if abs(anomalia_uso) > 10 else 98.5
+    }
 
 # Historial de Fallas
 @app.get("/api/failures", response_model=List[FailureHistory])
 def get_failures():
-    return failures_history_db
+    return get_failures_from_supabase()
 
 # Resumen por Tipo
 @app.get("/api/type-summary")
 def get_type_summary():
+    equipments = get_equipments_from_supabase(limit=1000)
     return {
-        "torniquetes": len([e for e in equipments_db if e["type"] == "torniquete"]),
-        "transbank": len([e for e in equipments_db if e["type"] == "transbank"]),
+        "torniquetes": len([e for e in equipments if e["type"] == "torniquete"]),
+        "transbank": len([e for e in equipments if e["type"] == "transbank"]),
     }
 
 # Resumen por Estado
 @app.get("/api/status-summary")
 def get_status_summary():
+    equipments = get_equipments_from_supabase(limit=1000)
     return {
-        "operativo": len([e for e in equipments_db if e["status"] == "operativo"]),
-        "falla": len([e for e in equipments_db if e["status"] == "falla"]),
-        "mantenimiento": len([e for e in equipments_db if e["status"] == "mantenimiento"]),
+        "operativo": len([e for e in equipments if e["status"] == "operativo"]),
+        "falla": len([e for e in equipments if e["status"] == "falla"]),
+        "mantenimiento": len([e for e in equipments if e["status"] == "mantenimiento"]),
     }
 
 # Programar Mantenimiento
@@ -159,17 +273,33 @@ def schedule_maintenance(request: MaintenanceRequest):
 @app.post("/api/predict/{equipment_id}")
 def predict_failure(equipment_id: int):
     """Simula una predicción del modelo ML para torniquetes y Transbank"""
-    equipment = next((e for e in equipments_db if e["id"] == equipment_id), None)
-    if not equipment:
+    result = supabase.table('equipos_borde').select('*').eq('id', equipment_id).limit(1).execute()
+    if not result.data:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
     
-    # Calcular probabilidad basada en historial
-    base_probability = 100 - equipment["uptime"]
-    probability = min(95, max(5, base_probability + random.randint(-10, 20)))
+    row = result.data[0]
+    
+    # Calcular probabilidad basada en datos reales
+    falla_inminente = row.get('FALLA_INMINENTE_7D', 0) == 1
+    anomalia_uso = abs(row.get('ANOMALIA_USO', 0) or 0)
+    dias_mant = row.get('DIAS_DESDE_ULTIMO_MANT', 0) or 0
+    
+    # Base probability
+    if falla_inminente:
+        base_probability = 75
+    elif anomalia_uso > 10:
+        base_probability = 45
+    else:
+        base_probability = 10
+    
+    # Ajustar por días sin mantenimiento
+    base_probability += min(20, dias_mant / 5)
+    
+    probability = min(95, max(5, base_probability + random.randint(-10, 15)))
     
     return {
         "equipment_id": equipment_id,
-        "equipment_name": equipment["name"],
+        "equipment_name": row.get('ID_EQUIPO'),
         "probability": round(probability, 1),
         "confidence": round(random.uniform(0.85, 0.98), 2),
         "timestamp": datetime.now().isoformat()
@@ -185,15 +315,15 @@ def generate_report(report_type: str = "general"):
         "download_url": f"/api/reports/download/{report_type}"
     }
 
-# Actualizar estado de equipo
+# Actualizar estado de equipo (solo respuesta, no modifica Supabase por ahora)
 @app.put("/api/equipments/{equipment_id}/status")
 def update_equipment_status(equipment_id: int, status: str):
-    equipment = next((e for e in equipments_db if e["id"] == equipment_id), None)
-    if not equipment:
+    result = supabase.table('equipos_borde').select('id').eq('id', equipment_id).limit(1).execute()
+    if not result.data:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
     
     if status not in ["operativo", "falla", "mantenimiento"]:
         raise HTTPException(status_code=400, detail="Estado inválido")
     
-    equipment["status"] = status
+    # Por ahora solo retornamos éxito (la BD es de solo lectura)
     return {"success": True, "message": f"Estado actualizado a {status}"}

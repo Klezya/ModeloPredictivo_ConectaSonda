@@ -43,3 +43,11 @@ __screenshots__/
 
 # Env
 .env
+
+# Entorno Virtual
+
+backend/venv
+
+
+# Dataset de ejemplo
+dataset_torniquetes_completo.csv
