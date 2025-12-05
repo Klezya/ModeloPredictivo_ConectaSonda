@@ -31,6 +31,7 @@ app.add_middleware(
         "http://localhost:80",    # Docker frontend alt
         "http://localhost",       # Docker frontend sin puerto
         "http://frontend",        # Docker internal network
+        "*",  # Permitir cualquier origen (para AWS y otros deployments)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -94,7 +95,7 @@ def get_equipments_from_supabase(equipment_type: Optional[str] = None, limit: in
             
             if falla_tipo and falla_tipo != 'Ninguna':
                 status = 'falla'
-            elif dias_mant and dias_mant > 30:
+            elif dias_mant and dias_mant > 180:
                 status = 'mantenimiento'
             else:
                 status = 'operativo'
@@ -103,10 +104,15 @@ def get_equipments_from_supabase(equipment_type: Optional[str] = None, limit: in
             anomalia_uso = row.get('ANOMALIA_USO', 0) or 0
             uptime = 95.0 if abs(anomalia_uso) > 10 else 98.5
             
+            # Mapear tipo: 'máquina autoservicio' -> 'transbank'
+            tipo_equipo = row.get('TIPO_EQUIPO', 'torniquete').lower()
+            if 'autoservicio' in tipo_equipo:
+                tipo_equipo = 'transbank'
+            
             equipos_dict[equipo_id] = {
                 "id": row.get('id'),
                 "name": equipo_id,
-                "type": row.get('TIPO_EQUIPO', 'torniquete').lower(),
+                "type": tipo_equipo,
                 "location": row.get('ESTACION', 'Sin ubicación'),
                 "status": status,
                 "last_maintenance": str(row.get('FECHA_HORA', ''))[:10],
@@ -118,44 +124,42 @@ def get_equipments_from_supabase(equipment_type: Optional[str] = None, limit: in
     return list(equipos_dict.values())
 
 def get_failures_from_supabase(limit: int = 50):
-    """Obtiene historial de fallas desde Supabase"""
-    result = supabase.table('equipos_borde').select('*').neq('FALLA_TIPO', 'Ninguna').limit(limit).execute()
+    """Obtiene historial de fallas únicas por equipo desde Supabase"""
+    result = supabase.table('equipos_borde').select('*').neq('FALLA_TIPO', 'Ninguna').order('FECHA_HORA', desc=True).limit(500).execute()
     
+    # Agrupar por equipo, quedarnos solo con la falla más reciente de cada uno
+    equipos_vistos = set()
     failures = []
-    for i, row in enumerate(result.data, 1):
-        failures.append({
-            "id": i,
-            "date": str(row.get('FECHA_HORA', ''))[:10],
-            "equipment": row.get('ID_EQUIPO', 'Desconocido'),
-            "resolved": row.get('FALLA_TIPO') == 'Ninguna'
-        })
+    
+    for row in result.data:
+        equipo_id = row.get('ID_EQUIPO', 'Desconocido')
+        if equipo_id not in equipos_vistos:
+            equipos_vistos.add(equipo_id)
+            failures.append({
+                "id": len(failures) + 1,
+                "date": str(row.get('FECHA_HORA', ''))[:10],
+                "equipment": equipo_id,
+                "resolved": False
+            })
+            if len(failures) >= limit:
+                break
     
     return failures
 
 def get_metrics_from_supabase():
-    """Calcula métricas desde Supabase"""
-    # Total de equipos únicos
-    total_result = supabase.table('equipos_borde').select('ID_EQUIPO').execute()
-    equipos_unicos = set(row.get('ID_EQUIPO') for row in total_result.data)
-    total_equipments = len(equipos_unicos)
+    """Calcula métricas desde Supabase basado en equipos únicos"""
+    equipments = get_equipments_from_supabase(limit=1000)
     
-    # Fallas activas
-    fallas_result = supabase.table('equipos_borde').select('*', count='exact').neq('FALLA_TIPO', 'Ninguna').limit(1).execute()
-    active_alerts = fallas_result.count or 0
-    
-    # Predicciones de falla (registros con FALLA_INMINENTE_7D = 1)
-    predicciones_result = supabase.table('equipos_borde').select('*', count='exact').eq('FALLA_INMINENTE_7D', 1).limit(1).execute()
-    predicted_failures = predicciones_result.count or 0
-    
-    # Equipos en mantenimiento (DIAS_DESDE_ULTIMO_MANT > 30)
-    mant_result = supabase.table('equipos_borde').select('*', count='exact').gt('DIAS_DESDE_ULTIMO_MANT', 30).limit(1).execute()
-    maintenance_scheduled = mant_result.count or 0
+    total_equipments = len(equipments)
+    operativos = len([e for e in equipments if e["status"] == "operativo"])
+    con_falla = len([e for e in equipments if e["status"] == "falla"])
+    en_mantenimiento = len([e for e in equipments if e["status"] == "mantenimiento"])
     
     return {
         "total_equipments": total_equipments,
-        "active_alerts": min(active_alerts, 100),  # Limitar para UI
-        "predicted_failures": min(predicted_failures, 50),
-        "maintenance_scheduled": min(maintenance_scheduled, 20),
+        "active_alerts": operativos,
+        "predicted_failures": con_falla,
+        "maintenance_scheduled": en_mantenimiento,
         "system_accuracy": 94.5,
         "avg_response_time": "96.8%"
     }
@@ -207,17 +211,22 @@ def get_equipment(equipment_id: int):
     
     if falla_tipo and falla_tipo != 'Ninguna':
         status = 'falla'
-    elif dias_mant and dias_mant > 30:
+    elif dias_mant and dias_mant > 180:
         status = 'mantenimiento'
     else:
         status = 'operativo'
     
     anomalia_uso = row.get('ANOMALIA_USO', 0) or 0
     
+    # Mapear tipo: 'máquina autoservicio' -> 'transbank'
+    tipo_equipo = row.get('TIPO_EQUIPO', 'torniquete').lower()
+    if 'autoservicio' in tipo_equipo:
+        tipo_equipo = 'transbank'
+    
     return {
         "id": row.get('id'),
         "name": row.get('ID_EQUIPO'),
-        "type": row.get('TIPO_EQUIPO', 'torniquete').lower(),
+        "type": tipo_equipo,
         "location": row.get('ESTACION', 'Sin ubicación'),
         "status": status,
         "last_maintenance": str(row.get('FECHA_HORA', ''))[:10],

@@ -13,9 +13,13 @@ RUN npm install
 # Copiar el código fuente
 COPY . .
 
-# Argumento para la URL de la API (se pasa en build time)
+# Argumentos para build time (Vite necesita esto en build, no en runtime)
 ARG VITE_API_URL=http://localhost:8000
+ARG VITE_ADMIN_USER=admin_user
+ARG VITE_ADMIN_PASSWORD=admin_password
 ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_ADMIN_USER=$VITE_ADMIN_USER
+ENV VITE_ADMIN_PASSWORD=$VITE_ADMIN_PASSWORD
 
 # Build de producción
 RUN npm run build

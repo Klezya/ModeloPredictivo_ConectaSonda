@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiService, type Metrics, type FailureHistory } from '@/services/api'
+import { apiService, type Metrics, type FailureHistory, type Equipment } from '@/services/api'
 
 const router = useRouter()
 
@@ -47,7 +47,7 @@ const loadData = async () => {
     isLoading.value = true
     error.value = ''
 
-    // Intentar cargar desde API
+    // Cargar métricas desde API
     const metricsData = await apiService.getMetrics()
     metrics.value = {
       total_equipments: metricsData.total_equipments,
@@ -58,6 +58,7 @@ const loadData = async () => {
       avg_uptime: metricsData.avg_response_time
     }
 
+    // Cargar fallas desde API
     const failuresData = await apiService.getFailures()
     recentFailures.value = failuresData.map((f: FailureHistory) => ({
       date: f.date,
@@ -65,7 +66,18 @@ const loadData = async () => {
       resolved: f.resolved
     }))
 
-    loadDemoData() // Cargar equipos demo por ahora
+    // Cargar equipos desde API
+    const equipmentsData = await apiService.getEquipments()
+    equipments.value = equipmentsData.map((e: Equipment) => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      location: e.location,
+      status: e.status,
+      lastFailure: e.last_failure,
+      failureCount: e.failure_count,
+      uptime: e.uptime
+    }))
 
   } catch (err) {
     console.error('Error loading data:', err)

@@ -22,6 +22,8 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_API_URL=http://localhost:8001
+        - VITE_ADMIN_USER=admin_user
+        - VITE_ADMIN_PASSWORD=admin_password
     container_name: conectasonda-frontend
     ports:
       - "3000:80"
