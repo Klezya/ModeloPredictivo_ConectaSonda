@@ -22,10 +22,16 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS para conectar con el frontend
+# CORS para conectar con el frontend (desarrollo y producción)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # Docker frontend
+        "http://localhost:80",    # Docker frontend alt
+        "http://localhost",       # Docker frontend sin puerto
+        "http://frontend",        # Docker internal network
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
