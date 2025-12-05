@@ -2,126 +2,147 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { apiService, type Metrics, type FailureHistory } from '@/services/api'
 
 const router = useRouter()
 
 // Estado del dashboard
 const isLoading = ref(true)
 const selectedTimeRange = ref('24h')
-const selectedEquipment = ref('all')
+const selectedEquipmentType = ref('all')
+const error = ref('')
 
-// Datos simulados de predicciones
-const predictions = ref([
-  {
-    id: 1,
-    equipment: 'Sonda A-001',
-    location: 'Sector Norte',
-    riskLevel: 'alto',
-    probability: 87,
-    predictedFailure: 'Falla en sensor de presión',
-    estimatedTime: '2-4 horas',
-    lastMaintenance: '2024-01-15',
-    status: 'activo'
-  },
-  {
-    id: 2,
-    equipment: 'Sonda B-023',
-    location: 'Sector Sur',
-    riskLevel: 'medio',
-    probability: 54,
-    predictedFailure: 'Desgaste en válvula principal',
-    estimatedTime: '24-48 horas',
-    lastMaintenance: '2024-02-01',
-    status: 'activo'
-  },
-  {
-    id: 3,
-    equipment: 'Sonda C-105',
-    location: 'Sector Este',
-    riskLevel: 'bajo',
-    probability: 23,
-    predictedFailure: 'Calibración requerida',
-    estimatedTime: '1 semana',
-    lastMaintenance: '2024-01-28',
-    status: 'activo'
-  },
-  {
-    id: 4,
-    equipment: 'Sonda D-042',
-    location: 'Sector Oeste',
-    riskLevel: 'critico',
-    probability: 95,
-    predictedFailure: 'Falla inminente en motor',
-    estimatedTime: '< 1 hora',
-    lastMaintenance: '2023-12-10',
-    status: 'alerta'
-  },
-  {
-    id: 5,
-    equipment: 'Sonda E-078',
-    location: 'Sector Norte',
-    riskLevel: 'bajo',
-    probability: 12,
-    predictedFailure: 'Sin fallas previstas',
-    estimatedTime: 'N/A',
-    lastMaintenance: '2024-02-10',
-    status: 'óptimo'
-  }
-])
+// Datos de equipos
+const equipments = ref<Array<{
+  id: number
+  name: string
+  type: string
+  location: string
+  status: string
+  lastFailure: string
+  failureCount: number
+  uptime: number
+}>>([])
 
 // Métricas generales
 const metrics = ref({
-  totalEquipments: 156,
-  activeAlerts: 12,
-  predictedFailures: 8,
-  maintenanceScheduled: 5,
-  systemAccuracy: 94.5,
-  avgResponseTime: '2.3h'
+  total_equipments: 0,
+  active_equipments: 0,
+  inactive_equipments: 0,
+  maintenance_pending: 0,
+  system_accuracy: 0,
+  avg_uptime: '0%'
 })
 
 // Historial de fallas recientes
-const recentFailures = ref([
-  { date: '2024-02-18', equipment: 'Sonda F-012', type: 'Sensor', resolved: true },
-  { date: '2024-02-17', equipment: 'Sonda A-045', type: 'Válvula', resolved: true },
-  { date: '2024-02-16', equipment: 'Sonda B-089', type: 'Motor', resolved: false },
-  { date: '2024-02-15', equipment: 'Sonda C-023', type: 'Presión', resolved: true }
-])
+const recentFailures = ref<Array<{
+  date: string
+  equipment: string
+  type: string
+  resolved: boolean
+}>>([])
 
-// Filtrar predicciones
-const filteredPredictions = computed(() => {
-  if (selectedEquipment.value === 'all') {
-    return predictions.value
+// Cargar datos desde el API
+const loadData = async () => {
+  try {
+    isLoading.value = true
+    error.value = ''
+
+    // Intentar cargar desde API
+    const metricsData = await apiService.getMetrics()
+    metrics.value = {
+      total_equipments: metricsData.total_equipments,
+      active_equipments: metricsData.active_alerts,
+      inactive_equipments: metricsData.predicted_failures,
+      maintenance_pending: metricsData.maintenance_scheduled,
+      system_accuracy: metricsData.system_accuracy,
+      avg_uptime: metricsData.avg_response_time
+    }
+
+    const failuresData = await apiService.getFailures()
+    recentFailures.value = failuresData.map((f: FailureHistory) => ({
+      date: f.date,
+      equipment: f.equipment,
+      type: f.failure_type,
+      resolved: f.resolved
+    }))
+
+    loadDemoData() // Cargar equipos demo por ahora
+
+  } catch (err) {
+    console.error('Error loading data:', err)
+    error.value = 'Error al cargar los datos. Usando datos de demostración.'
+    loadDemoData()
+  } finally {
+    isLoading.value = false
   }
-  return predictions.value.filter(p => 
-    p.riskLevel === selectedEquipment.value
-  )
+}
+
+// Datos de demostración
+const loadDemoData = () => {
+  equipments.value = [
+    { id: 1, name: 'Torniquete T-001', type: 'torniquete', location: 'Estación Central - Acceso Norte', status: 'operativo', lastFailure: '2024-11-20', failureCount: 3, uptime: 98.5 },
+    { id: 2, name: 'Torniquete T-002', type: 'torniquete', location: 'Estación Central - Acceso Sur', status: 'operativo', lastFailure: '2024-12-01', failureCount: 1, uptime: 99.2 },
+    { id: 3, name: 'Transbank TB-001', type: 'transbank', location: 'Estación Central - Hall Principal', status: 'falla', lastFailure: '2024-12-04', failureCount: 5, uptime: 94.1 },
+    { id: 4, name: 'Torniquete T-003', type: 'torniquete', location: 'Estación Los Héroes - Acceso Este', status: 'mantenimiento', lastFailure: '2024-11-15', failureCount: 2, uptime: 97.8 },
+    { id: 5, name: 'Transbank TB-002', type: 'transbank', location: 'Estación Los Héroes - Boletería', status: 'operativo', lastFailure: '2024-10-28', failureCount: 2, uptime: 96.5 },
+    { id: 6, name: 'Torniquete T-004', type: 'torniquete', location: 'Estación Baquedano - Acceso Principal', status: 'operativo', lastFailure: '2024-11-30', failureCount: 1, uptime: 99.0 },
+    { id: 7, name: 'Transbank TB-003', type: 'transbank', location: 'Estación Baquedano - Autoservicio', status: 'operativo', lastFailure: '2024-11-10', failureCount: 4, uptime: 95.3 },
+    { id: 8, name: 'Torniquete T-005', type: 'torniquete', location: 'Estación Tobalaba - Acceso Oriente', status: 'falla', lastFailure: '2024-12-04', failureCount: 6, uptime: 92.1 }
+  ]
+
+  metrics.value = {
+    total_equipments: 85,
+    active_equipments: 78,
+    inactive_equipments: 7,
+    maintenance_pending: 4,
+    system_accuracy: 94.5,
+    avg_uptime: '96.8%'
+  }
+
+  recentFailures.value = [
+    { date: '2024-12-04', equipment: 'Transbank TB-001', type: 'Lector de tarjetas', resolved: false },
+    { date: '2024-12-04', equipment: 'Torniquete T-005', type: 'Motor de giro', resolved: false },
+    { date: '2024-12-03', equipment: 'Torniquete T-002', type: 'Sensor de paso', resolved: true },
+    { date: '2024-12-02', equipment: 'Transbank TB-003', type: 'Pantalla táctil', resolved: true }
+  ]
+}
+
+// Filtrar equipos
+const filteredEquipments = computed(() => {
+  if (selectedEquipmentType.value === 'all') {
+    return equipments.value
+  }
+  return equipments.value.filter(e => e.type === selectedEquipmentType.value)
 })
 
-// Contadores por nivel de riesgo
-const riskCounts = computed(() => ({
-  critico: predictions.value.filter(p => p.riskLevel === 'critico').length,
-  alto: predictions.value.filter(p => p.riskLevel === 'alto').length,
-  medio: predictions.value.filter(p => p.riskLevel === 'medio').length,
-  bajo: predictions.value.filter(p => p.riskLevel === 'bajo').length
+// Contadores por tipo
+const typeCounts = computed(() => ({
+  torniquetes: equipments.value.filter(e => e.type === 'torniquete').length,
+  transbank: equipments.value.filter(e => e.type === 'transbank').length
 }))
 
-const getRiskClass = (level: string) => {
-  const classes: Record<string, string> = {
-    critico: 'risk-critical',
-    alto: 'risk-high',
-    medio: 'risk-medium',
-    bajo: 'risk-low'
-  }
-  return classes[level] || ''
-}
+// Contadores por estado
+const statusCounts = computed(() => ({
+  operativo: equipments.value.filter(e => e.status === 'operativo').length,
+  falla: equipments.value.filter(e => e.status === 'falla').length,
+  mantenimiento: equipments.value.filter(e => e.status === 'mantenimiento').length
+}))
 
 const getStatusClass = (status: string) => {
   const classes: Record<string, string> = {
-    activo: 'status-active',
-    alerta: 'status-alert',
-    óptimo: 'status-optimal'
+    operativo: 'status-operational',
+    falla: 'status-failure',
+    mantenimiento: 'status-maintenance'
   }
   return classes[status] || ''
+}
+
+const getUptimeClass = (uptime: number) => {
+  if (uptime >= 98) return 'uptime-excellent'
+  if (uptime >= 95) return 'uptime-good'
+  if (uptime >= 90) return 'uptime-warning'
+  return 'uptime-critical'
 }
 
 const handleLogout = () => {
@@ -130,20 +151,24 @@ const handleLogout = () => {
 }
 
 const viewDetails = (id: number) => {
-  console.log('Ver detalles del equipo:', id)
-  // Aquí se podría navegar a una vista de detalle
+  router.push({ name: 'equipment-detail', params: { id } })
 }
 
 const scheduleMaintenace = (id: number) => {
-  console.log('Programar mantenimiento para:', id)
-  // Aquí se podría abrir un modal para programar mantenimiento
+  alert(`Programar mantenimiento para equipo ID: ${id}`)
+}
+
+const generateReport = async () => {
+  try {
+    await apiService.generateReport('general')
+    alert('Reporte generado exitosamente')
+  } catch (err) {
+    alert('Error al generar el reporte')
+  }
 }
 
 onMounted(() => {
-  // Simular carga de datos
-  setTimeout(() => {
-    isLoading.value = false
-  }, 1000)
+  loadData()
 })
 </script>
 
@@ -153,7 +178,7 @@ onMounted(() => {
     <header class="dashboard-header">
       <div class="header-left">
         <h1>Sistema Predictivo de Fallas</h1>
-        <span class="subtitle">ConectaSonda - Monitoreo en Tiempo Real</span>
+        <span class="subtitle">ConectaSonda - Torniquetes y Transbank</span>
       </div>
       <div class="header-right">
         <select v-model="selectedTimeRange" class="time-select">
@@ -176,176 +201,193 @@ onMounted(() => {
 
     <!-- Dashboard Content -->
     <main v-else class="dashboard-content">
+      <!-- Error Banner -->
+      <div v-if="error" class="error-banner">
+        {{ error }}
+      </div>
+
       <!-- Métricas Principales -->
       <section class="metrics-section">
         <div class="metric-card">
           <div class="metric-icon"></div>
           <div class="metric-info">
-            <span class="metric-value">{{ metrics.totalEquipments }}</span>
-            <span class="metric-label">Equipos Monitoreados</span>
-          </div>
-        </div>
-        <div class="metric-card alert">
-          <div class="metric-icon"></div>
-          <div class="metric-info">
-            <span class="metric-value">{{ metrics.activeAlerts }}</span>
-            <span class="metric-label">Alertas Activas</span>
-          </div>
-        </div>
-        <div class="metric-card warning">
-          <div class="metric-icon"></div>
-          <div class="metric-info">
-            <span class="metric-value">{{ metrics.predictedFailures }}</span>
-            <span class="metric-label">Fallas Predichas</span>
+            <span class="metric-value">{{ metrics.total_equipments }}</span>
+            <span class="metric-label">Equipos Totales</span>
           </div>
         </div>
         <div class="metric-card success">
           <div class="metric-icon"></div>
           <div class="metric-info">
-            <span class="metric-value">{{ metrics.maintenanceScheduled }}</span>
-            <span class="metric-label">Mantenimientos Programados</span>
+            <span class="metric-value">{{ metrics.active_equipments }}</span>
+            <span class="metric-label">Equipos Operativos</span>
+          </div>
+        </div>
+        <div class="metric-card alert">
+          <div class="metric-icon"></div>
+          <div class="metric-info">
+            <span class="metric-value">{{ metrics.inactive_equipments }}</span>
+            <span class="metric-label">Equipos con Falla</span>
+          </div>
+        </div>
+        <div class="metric-card warning">
+          <div class="metric-icon"></div>
+          <div class="metric-info">
+            <span class="metric-value">{{ metrics.maintenance_pending }}</span>
+            <span class="metric-label">Mantenimientos Pendientes</span>
           </div>
         </div>
         <div class="metric-card info">
           <div class="metric-icon"></div>
           <div class="metric-info">
-            <span class="metric-value">{{ metrics.systemAccuracy }}%</span>
+            <span class="metric-value">{{ metrics.system_accuracy }}%</span>
             <span class="metric-label">Precisión del Modelo</span>
           </div>
         </div>
         <div class="metric-card">
           <div class="metric-icon"></div>
           <div class="metric-info">
-            <span class="metric-value">{{ metrics.avgResponseTime }}</span>
-            <span class="metric-label">Tiempo Respuesta Promedio</span>
+            <span class="metric-value">{{ metrics.avg_uptime }}</span>
+            <span class="metric-label">Uptime Promedio</span>
           </div>
         </div>
       </section>
 
-      <!-- Resumen de Riesgos -->
-      <section class="risk-summary">
-        <h2>Resumen de Niveles de Riesgo</h2>
-        <div class="risk-bars">
-          <div class="risk-bar">
-            <div class="risk-bar-label">
-              <span class="risk-dot critical"></span>
-              Crítico
+      <!-- Resumen por Tipo y Estado -->
+      <section class="summary-section">
+        <div class="summary-card">
+          <h2>Equipos por Tipo</h2>
+          <div class="summary-bars">
+            <div class="summary-bar">
+              <div class="summary-bar-label">Torniquetes</div>
+              <div class="summary-bar-track">
+                <div 
+                  class="summary-bar-fill torniquete" 
+                  :style="{ width: (typeCounts.torniquetes / equipments.length * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="summary-bar-count">{{ typeCounts.torniquetes }}</span>
             </div>
-            <div class="risk-bar-track">
-              <div 
-                class="risk-bar-fill critical" 
-                :style="{ width: (riskCounts.critico / predictions.length * 100) + '%' }"
-              ></div>
+            <div class="summary-bar">
+              <div class="summary-bar-label">Transbank</div>
+              <div class="summary-bar-track">
+                <div 
+                  class="summary-bar-fill transbank" 
+                  :style="{ width: (typeCounts.transbank / equipments.length * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="summary-bar-count">{{ typeCounts.transbank }}</span>
             </div>
-            <span class="risk-bar-count">{{ riskCounts.critico }}</span>
           </div>
-          <div class="risk-bar">
-            <div class="risk-bar-label">
-              <span class="risk-dot high"></span>
-              Alto
+        </div>
+        <div class="summary-card">
+          <h2>Estado de Equipos</h2>
+          <div class="summary-bars">
+            <div class="summary-bar">
+              <div class="summary-bar-label">
+                <span class="status-dot operational"></span>
+                Operativo
+              </div>
+              <div class="summary-bar-track">
+                <div 
+                  class="summary-bar-fill operational" 
+                  :style="{ width: (statusCounts.operativo / equipments.length * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="summary-bar-count">{{ statusCounts.operativo }}</span>
             </div>
-            <div class="risk-bar-track">
-              <div 
-                class="risk-bar-fill high" 
-                :style="{ width: (riskCounts.alto / predictions.length * 100) + '%' }"
-              ></div>
+            <div class="summary-bar">
+              <div class="summary-bar-label">
+                <span class="status-dot failure"></span>
+                Con Falla
+              </div>
+              <div class="summary-bar-track">
+                <div 
+                  class="summary-bar-fill failure" 
+                  :style="{ width: (statusCounts.falla / equipments.length * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="summary-bar-count">{{ statusCounts.falla }}</span>
             </div>
-            <span class="risk-bar-count">{{ riskCounts.alto }}</span>
-          </div>
-          <div class="risk-bar">
-            <div class="risk-bar-label">
-              <span class="risk-dot medium"></span>
-              Medio
+            <div class="summary-bar">
+              <div class="summary-bar-label">
+                <span class="status-dot maintenance"></span>
+                Mantenimiento
+              </div>
+              <div class="summary-bar-track">
+                <div 
+                  class="summary-bar-fill maintenance" 
+                  :style="{ width: (statusCounts.mantenimiento / equipments.length * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="summary-bar-count">{{ statusCounts.mantenimiento }}</span>
             </div>
-            <div class="risk-bar-track">
-              <div 
-                class="risk-bar-fill medium" 
-                :style="{ width: (riskCounts.medio / predictions.length * 100) + '%' }"
-              ></div>
-            </div>
-            <span class="risk-bar-count">{{ riskCounts.medio }}</span>
-          </div>
-          <div class="risk-bar">
-            <div class="risk-bar-label">
-              <span class="risk-dot low"></span>
-              Bajo
-            </div>
-            <div class="risk-bar-track">
-              <div 
-                class="risk-bar-fill low" 
-                :style="{ width: (riskCounts.bajo / predictions.length * 100) + '%' }"
-              ></div>
-            </div>
-            <span class="risk-bar-count">{{ riskCounts.bajo }}</span>
           </div>
         </div>
       </section>
 
       <!-- Contenido Principal -->
       <div class="main-grid">
-        <!-- Tabla de Predicciones -->
-        <section class="predictions-section">
+        <!-- Tabla de Equipos -->
+        <section class="equipments-section">
           <div class="section-header">
-            <h2>Predicciones de Fallas</h2>
-            <select v-model="selectedEquipment" class="filter-select">
-              <option value="all">Todos los niveles</option>
-              <option value="critico">Solo Críticos</option>
-              <option value="alto">Solo Altos</option>
-              <option value="medio">Solo Medios</option>
-              <option value="bajo">Solo Bajos</option>
+            <h2>Estado de Equipos</h2>
+            <select v-model="selectedEquipmentType" class="filter-select">
+              <option value="all">Todos los equipos</option>
+              <option value="torniquete">Solo Torniquetes</option>
+              <option value="transbank">Solo Transbank</option>
             </select>
           </div>
           
-          <div class="predictions-table">
+          <div class="equipments-table">
             <table>
               <thead>
                 <tr>
                   <th>Equipo</th>
+                  <th>Tipo</th>
                   <th>Ubicación</th>
-                  <th>Riesgo</th>
-                  <th>Probabilidad</th>
-                  <th>Falla Predicha</th>
-                  <th>Tiempo Estimado</th>
                   <th>Estado</th>
+                  <th>Última Falla</th>
+                  <th>N° Fallas</th>
+                  <th>Uptime</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 <tr 
-                  v-for="prediction in filteredPredictions" 
-                  :key="prediction.id"
-                  :class="{ 'row-critical': prediction.riskLevel === 'critico' }"
+                  v-for="equipment in filteredEquipments" 
+                  :key="equipment.id"
+                  :class="{ 'row-failure': equipment.status === 'falla' }"
                 >
-                  <td class="equipment-name">{{ prediction.equipment }}</td>
-                  <td>{{ prediction.location }}</td>
+                  <td class="equipment-name">{{ equipment.name }}</td>
                   <td>
-                    <span :class="['risk-badge', getRiskClass(prediction.riskLevel)]">
-                      {{ prediction.riskLevel.toUpperCase() }}
+                    <span :class="['type-badge', equipment.type]">
+                      {{ equipment.type === 'torniquete' ? 'Torniquete' : 'Transbank' }}
                     </span>
                   </td>
+                  <td>{{ equipment.location }}</td>
                   <td>
-                    <div class="probability-bar">
+                    <span :class="['status-badge', getStatusClass(equipment.status)]">
+                      {{ equipment.status }}
+                    </span>
+                  </td>
+                  <td>{{ equipment.lastFailure }}</td>
+                  <td class="failure-count">{{ equipment.failureCount }}</td>
+                  <td>
+                    <div class="uptime-bar">
                       <div 
-                        class="probability-fill" 
-                        :class="getRiskClass(prediction.riskLevel)"
-                        :style="{ width: prediction.probability + '%' }"
+                        class="uptime-fill" 
+                        :class="getUptimeClass(equipment.uptime)"
+                        :style="{ width: equipment.uptime + '%' }"
                       ></div>
-                      <span class="probability-text">{{ prediction.probability }}%</span>
+                      <span class="uptime-text">{{ equipment.uptime }}%</span>
                     </div>
                   </td>
-                  <td>{{ prediction.predictedFailure }}</td>
-                  <td class="time-estimate">{{ prediction.estimatedTime }}</td>
-                  <td>
-                    <span :class="['status-badge', getStatusClass(prediction.status)]">
-                      {{ prediction.status }}
-                    </span>
-                  </td>
                   <td class="actions">
-                    <button class="btn-action btn-view" @click="viewDetails(prediction.id)">
+                    <button class="btn-action btn-view" @click="viewDetails(equipment.id)">
                       Ver
                     </button>
-                    <button class="btn-action btn-schedule" @click="scheduleMaintenace(prediction.id)">
-                      Programar
+                    <button class="btn-action btn-schedule" @click="scheduleMaintenace(equipment.id)">
+                      Mantención
                     </button>
                   </td>
                 </tr>
@@ -383,7 +425,7 @@ onMounted(() => {
           <div class="sidebar-card">
             <h3>Acciones Rápidas</h3>
             <div class="quick-actions">
-              <button class="quick-btn">
+              <button class="quick-btn" @click="generateReport">
                 Generar Reporte
               </button>
               <button class="quick-btn">
@@ -514,6 +556,16 @@ onMounted(() => {
   to { transform: rotate(360deg); }
 }
 
+/* Error Banner */
+.error-banner {
+  background: #fef3e2;
+  color: #e67e22;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  border-left: 4px solid #e67e22;
+}
+
 /* Content */
 .dashboard-content {
   flex: 1;
@@ -565,52 +617,57 @@ onMounted(() => {
 }
 
 /* Risk Summary */
-.risk-summary {
+.summary-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.summary-card {
   background: white;
   border-radius: 8px;
   padding: 1.25rem;
-  margin-bottom: 1.5rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.risk-summary h2 {
+.summary-card h2 {
   margin: 0 0 1rem 0;
   font-size: 1.1rem;
   color: #1a1a2e;
 }
 
-.risk-bars {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+.summary-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.risk-bar {
+.summary-bar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.risk-bar-label {
+.summary-bar-label {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-width: 80px;
+  min-width: 120px;
   font-size: 0.9rem;
 }
 
-.risk-dot {
+.status-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
 }
 
-.risk-dot.critical { background: #e74c3c; }
-.risk-dot.high { background: #e67e22; }
-.risk-dot.medium { background: #f1c40f; }
-.risk-dot.low { background: #27ae60; }
+.status-dot.operational { background: #27ae60; }
+.status-dot.failure { background: #e74c3c; }
+.status-dot.maintenance { background: #f39c12; }
 
-.risk-bar-track {
+.summary-bar-track {
   flex: 1;
   height: 8px;
   background: #e0e0e0;
@@ -618,20 +675,22 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.risk-bar-fill {
+.summary-bar-fill {
   height: 100%;
   border-radius: 4px;
   transition: width 0.5s ease;
 }
 
-.risk-bar-fill.critical { background: #e74c3c; }
-.risk-bar-fill.high { background: #e67e22; }
-.risk-bar-fill.medium { background: #f1c40f; }
-.risk-bar-fill.low { background: #27ae60; }
+.summary-bar-fill.torniquete { background: #3498db; }
+.summary-bar-fill.transbank { background: #9b59b6; }
+.summary-bar-fill.operational { background: #27ae60; }
+.summary-bar-fill.failure { background: #e74c3c; }
+.summary-bar-fill.maintenance { background: #f39c12; }
 
-.risk-bar-count {
+.summary-bar-count {
   font-weight: 600;
-  min-width: 20px;
+  min-width: 30px;
+  text-align: right;
 }
 
 /* Main Grid */
@@ -641,8 +700,8 @@ onMounted(() => {
   gap: 1.5rem;
 }
 
-/* Predictions Section */
-.predictions-section {
+/* Equipments Section */
+.equipments-section {
   background: white;
   border-radius: 8px;
   padding: 1.25rem;
@@ -670,7 +729,7 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.predictions-table {
+.equipments-table {
   overflow-x: auto;
 }
 
@@ -693,7 +752,7 @@ th {
   text-transform: uppercase;
 }
 
-.row-critical {
+.row-failure {
   background: #fff5f5;
 }
 
@@ -702,19 +761,33 @@ th {
   color: #1a1a2e;
 }
 
-.risk-badge {
+.type-badge {
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   font-size: 0.75rem;
   font-weight: 600;
 }
 
-.risk-critical { background: #fde8e8; color: #e74c3c; }
-.risk-high { background: #fef3e2; color: #e67e22; }
-.risk-medium { background: #fef9e7; color: #b7950b; }
-.risk-low { background: #e8f8f0; color: #27ae60; }
+.type-badge.torniquete { background: #e8f4fd; color: #3498db; }
+.type-badge.transbank { background: #f3e8fd; color: #9b59b6; }
 
-.probability-bar {
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+.status-operational { background: #e8f8f0; color: #27ae60; }
+.status-failure { background: #fde8e8; color: #e74c3c; }
+.status-maintenance { background: #fef9e7; color: #b7950b; }
+
+.failure-count {
+  font-weight: 600;
+  color: #e74c3c;
+}
+
+.uptime-bar {
   position: relative;
   height: 20px;
   background: #e0e0e0;
@@ -723,13 +796,18 @@ th {
   overflow: hidden;
 }
 
-.probability-fill {
+.uptime-fill {
   height: 100%;
   border-radius: 10px;
   transition: width 0.5s ease;
 }
 
-.probability-text {
+.uptime-excellent { background: #27ae60; }
+.uptime-good { background: #3498db; }
+.uptime-warning { background: #f39c12; }
+.uptime-critical { background: #e74c3c; }
+
+.uptime-text {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -738,21 +816,6 @@ th {
   font-weight: 600;
   color: #333;
 }
-
-.time-estimate {
-  font-weight: 500;
-  color: #e67e22;
-}
-
-.status-badge {
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-}
-
-.status-active { background: #e8f4fd; color: #3498db; }
-.status-alert { background: #fde8e8; color: #e74c3c; }
-.status-optimal { background: #e8f8f0; color: #27ae60; }
 
 .actions {
   display: flex;
@@ -765,14 +828,15 @@ th {
   border-radius: 4px;
   cursor: pointer;
   transition: transform 0.2s;
+  font-size: 0.8rem;
 }
 
 .btn-action:hover {
-  transform: scale(1.1);
+  transform: scale(1.05);
 }
 
-.btn-view { background: #e8f4fd; }
-.btn-schedule { background: #e8f8f0; }
+.btn-view { background: #e8f4fd; color: #3498db; }
+.btn-schedule { background: #fef9e7; color: #b7950b; }
 
 /* Sidebar */
 .sidebar {
