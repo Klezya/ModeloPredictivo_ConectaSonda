@@ -38,7 +38,6 @@ const metrics = ref({
 const recentFailures = ref<Array<{
   date: string
   equipment: string
-  type: string
   resolved: boolean
 }>>([])
 
@@ -63,7 +62,6 @@ const loadData = async () => {
     recentFailures.value = failuresData.map((f: FailureHistory) => ({
       date: f.date,
       equipment: f.equipment,
-      type: f.failure_type,
       resolved: f.resolved
     }))
 
@@ -101,10 +99,10 @@ const loadDemoData = () => {
   }
 
   recentFailures.value = [
-    { date: '2024-12-04', equipment: 'Transbank TB-001', type: 'Lector de tarjetas', resolved: false },
-    { date: '2024-12-04', equipment: 'Torniquete T-005', type: 'Motor de giro', resolved: false },
-    { date: '2024-12-03', equipment: 'Torniquete T-002', type: 'Sensor de paso', resolved: true },
-    { date: '2024-12-02', equipment: 'Transbank TB-003', type: 'Pantalla táctil', resolved: true }
+    { date: '2024-12-04', equipment: 'Transbank TB-001', resolved: false },
+    { date: '2024-12-04', equipment: 'Torniquete T-005', resolved: false },
+    { date: '2024-12-03', equipment: 'Torniquete T-002', resolved: true },
+    { date: '2024-12-02', equipment: 'Transbank TB-003', resolved: true }
   ]
 }
 
@@ -406,7 +404,6 @@ onMounted(() => {
                 <div class="recent-item">
                   <div class="recent-info">
                     <span class="recent-equipment">{{ failure.equipment }}</span>
-                    <span class="recent-type">{{ failure.type }}</span>
                   </div>
                   <div class="recent-meta">
                     <span class="recent-date">{{ failure.date }}</span>

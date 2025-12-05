@@ -45,7 +45,6 @@ class FailureHistory(BaseModel):
     id: int
     date: str
     equipment: str
-    failure_type: str
     resolved: bool
 
 class MaintenanceRequest(BaseModel):
@@ -68,12 +67,12 @@ equipments_db = [
 ]
 
 failures_history_db = [
-    {"id": 1, "date": "2024-12-04", "equipment": "Transbank TB-001", "failure_type": "Lector de tarjetas", "resolved": False},
-    {"id": 2, "date": "2024-12-04", "equipment": "Torniquete T-005", "failure_type": "Motor de giro", "resolved": False},
-    {"id": 3, "date": "2024-12-03", "equipment": "Torniquete T-002", "failure_type": "Sensor de paso", "resolved": True},
-    {"id": 4, "date": "2024-12-02", "equipment": "Transbank TB-003", "failure_type": "Pantalla táctil", "resolved": True},
-    {"id": 5, "date": "2024-12-01", "equipment": "Torniquete T-001", "failure_type": "Brazo mecánico", "resolved": True},
-    {"id": 6, "date": "2024-11-30", "equipment": "Torniquete T-004", "failure_type": "Lector BIP", "resolved": True},
+    {"id": 1, "date": "2024-12-04", "equipment": "Transbank TB-001", "resolved": False},
+    {"id": 2, "date": "2024-12-04", "equipment": "Torniquete T-005", "resolved": False},
+    {"id": 3, "date": "2024-12-03", "equipment": "Torniquete T-002", "resolved": True},
+    {"id": 4, "date": "2024-12-02", "equipment": "Transbank TB-003", "resolved": True},
+    {"id": 5, "date": "2024-12-01", "equipment": "Torniquete T-001", "resolved": True},
+    {"id": 6, "date": "2024-11-30", "equipment": "Torniquete T-004", "resolved": True},
 ]
 
 # ============== ENDPOINTS ==============
@@ -164,26 +163,6 @@ def predict_failure(equipment_id: int):
     if not equipment:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
     
-    # Tipos de falla según el tipo de equipo
-    if equipment["type"] == "torniquete":
-        failure_types = [
-            "Motor de giro",
-            "Sensor de paso",
-            "Brazo mecánico",
-            "Lector BIP",
-            "Placa controladora",
-            "Sistema de bloqueo"
-        ]
-    else:  # transbank
-        failure_types = [
-            "Lector de tarjetas",
-            "Pantalla táctil",
-            "Impresora de boletas",
-            "Conexión de red",
-            "Teclado PIN",
-            "Sistema de pago NFC"
-        ]
-    
     # Calcular probabilidad basada en historial
     base_probability = 100 - equipment["uptime"]
     probability = min(95, max(5, base_probability + random.randint(-10, 20)))
@@ -192,8 +171,6 @@ def predict_failure(equipment_id: int):
         "equipment_id": equipment_id,
         "equipment_name": equipment["name"],
         "probability": round(probability, 1),
-        "risk_level": "alto" if probability > 70 else "medio" if probability > 40 else "bajo",
-        "predicted_failure": random.choice(failure_types),
         "confidence": round(random.uniform(0.85, 0.98), 2),
         "timestamp": datetime.now().isoformat()
     }

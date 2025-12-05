@@ -1,16 +1,20 @@
 <!-- filepath: frontend/src/views/EquipmentDetailView.vue -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { apiService, type Equipment, type Prediction } from '@/services/api'
+import { apiService, type Equipment } from '@/services/api'
 
 const route = useRoute()
 const router = useRouter()
 
 const equipment = ref<Equipment | null>(null)
-const prediction = ref<Prediction | null>(null)
 const isLoading = ref(true)
+const error = ref('')
 const showMaintenanceModal = ref(false)
+const predictionResult = ref<{
+  probability: number
+  confidence: number
+} | null>(null)
 
 const maintenanceForm = ref({
   scheduled_date: '',
@@ -20,16 +24,49 @@ const maintenanceForm = ref({
 
 const loadData = async () => {
   try {
+    isLoading.value = true
+    error.value = ''
     const id = Number(route.params.id)
     equipment.value = await apiService.getEquipment(id)
-    
-    const predictions = await apiService.getPredictions()
-    prediction.value = predictions.find(p => p.equipment_id === id) || null
-  } catch (error) {
-    console.error('Error loading data:', error)
+  } catch (err) {
+    console.error('Error loading data:', err)
+    error.value = 'Error al cargar los datos del equipo'
+    // Datos de demostración
+    equipment.value = {
+      id: Number(route.params.id),
+      name: 'Torniquete T-001',
+      type: 'torniquete',
+      location: 'Estación Central - Acceso Norte',
+      status: 'operativo',
+      last_maintenance: '2024-11-15',
+      last_failure: '2024-11-20',
+      failure_count: 3,
+      uptime: 98.5
+    }
   } finally {
     isLoading.value = false
   }
+}
+
+const equipmentTypeLabel = computed(() => {
+  if (!equipment.value) return ''
+  return equipment.value.type === 'torniquete' ? 'Torniquete' : 'Transbank'
+})
+
+const getStatusClass = (status: string) => {
+  const classes: Record<string, string> = {
+    operativo: 'status-operational',
+    falla: 'status-failure',
+    mantenimiento: 'status-maintenance'
+  }
+  return classes[status] || ''
+}
+
+const getUptimeClass = (uptime: number) => {
+  if (uptime >= 98) return 'uptime-excellent'
+  if (uptime >= 95) return 'uptime-good'
+  if (uptime >= 90) return 'uptime-warning'
+  return 'uptime-critical'
 }
 
 const runPrediction = async () => {
@@ -37,9 +74,14 @@ const runPrediction = async () => {
   
   try {
     const result = await apiService.runPrediction(equipment.value.id)
-    alert(`Predicción ejecutada:\nRiesgo: ${result.risk_level}\nProbabilidad: ${result.probability}%`)
-  } catch (error) {
-    console.error('Error running prediction:', error)
+    predictionResult.value = {
+      probability: result.probability,
+      confidence: result.confidence
+    }
+    alert(`Predicción ejecutada:\nProbabilidad de falla: ${result.probability}%\nConfianza: ${(result.confidence * 100).toFixed(0)}%`)
+  } catch (err) {
+    console.error('Error running prediction:', err)
+    alert('Error al ejecutar la predicción')
   }
 }
 
@@ -53,8 +95,9 @@ const scheduleMaintenance = async () => {
     })
     showMaintenanceModal.value = false
     alert('Mantenimiento programado exitosamente')
-  } catch (error) {
-    console.error('Error scheduling maintenance:', error)
+  } catch (err) {
+    console.error('Error scheduling maintenance:', err)
+    alert('Error al programar mantenimiento')
   }
 }
 
@@ -77,6 +120,11 @@ onMounted(loadData)
     </div>
 
     <main v-else-if="equipment" class="detail-content">
+      <!-- Error Banner -->
+      <div v-if="error" class="error-banner">
+        {{ error }}
+      </div>
+
       <div class="info-grid">
         <!-- Información del Equipo -->
         <section class="info-card">
@@ -86,12 +134,16 @@ onMounted(loadData)
             <span class="value">{{ equipment.name }}</span>
           </div>
           <div class="info-row">
+            <span class="label">Tipo:</span>
+            <span :class="['type-badge', equipment.type]">{{ equipmentTypeLabel }}</span>
+          </div>
+          <div class="info-row">
             <span class="label">Ubicación:</span>
             <span class="value">{{ equipment.location }}</span>
           </div>
           <div class="info-row">
             <span class="label">Estado:</span>
-            <span :class="['status-badge', equipment.status]">{{ equipment.status }}</span>
+            <span :class="['status-badge', getStatusClass(equipment.status)]">{{ equipment.status }}</span>
           </div>
           <div class="info-row">
             <span class="label">Último Mantenimiento:</span>
@@ -99,28 +151,39 @@ onMounted(loadData)
           </div>
         </section>
 
-        <!-- Predicción Actual -->
-        <section v-if="prediction" class="info-card prediction-card">
-          <h2>Predicción de Falla</h2>
-          <div class="prediction-main">
-            <div class="probability-circle" :class="prediction.risk_level">
-              <span class="probability-value">{{ prediction.probability }}%</span>
-              <span class="probability-label">Probabilidad</span>
+        <!-- Estadísticas -->
+        <section class="info-card stats-card">
+          <h2>Estadísticas de Operación</h2>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-value" :class="getUptimeClass(equipment.uptime)">{{ equipment.uptime }}%</span>
+              <span class="stat-label">Uptime</span>
             </div>
-            <div class="prediction-info">
-              <div class="info-row">
-                <span class="label">Nivel de Riesgo:</span>
-                <span :class="['risk-badge', prediction.risk_level]">
-                  {{ prediction.risk_level.toUpperCase() }}
-                </span>
+            <div class="stat-item">
+              <span class="stat-value failure-count">{{ equipment.failure_count }}</span>
+              <span class="stat-label">Fallas Registradas</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value">{{ equipment.last_failure }}</span>
+              <span class="stat-label">Última Falla</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Predicción -->
+        <section v-if="predictionResult" class="info-card prediction-card">
+          <h2>Última Predicción</h2>
+          <div class="prediction-content">
+            <div class="prediction-main">
+              <div class="probability-circle" :class="predictionResult.probability > 50 ? 'high' : 'low'">
+                <span class="probability-value">{{ predictionResult.probability }}%</span>
+                <span class="probability-label">Probabilidad de Falla</span>
               </div>
-              <div class="info-row">
-                <span class="label">Falla Predicha:</span>
-                <span class="value">{{ prediction.predicted_failure }}</span>
-              </div>
-              <div class="info-row">
-                <span class="label">Tiempo Estimado:</span>
-                <span class="value warning">{{ prediction.estimated_time }}</span>
+              <div class="prediction-info">
+                <div class="info-row">
+                  <span class="label">Confianza del Modelo:</span>
+                  <span class="value">{{ (predictionResult.confidence * 100).toFixed(0) }}%</span>
+                </div>
               </div>
             </div>
           </div>
@@ -130,13 +193,10 @@ onMounted(loadData)
       <!-- Acciones -->
       <section class="actions-section">
         <button class="btn-primary" @click="runPrediction">
-          Ejecutar Nueva Predicción
+          Ejecutar Predicción
         </button>
         <button class="btn-secondary" @click="showMaintenanceModal = true">
           Programar Mantenimiento
-        </button>
-        <button class="btn-outline">
-          Ver Historial
         </button>
       </section>
     </main>
@@ -212,6 +272,15 @@ onMounted(loadData)
   margin: 0 auto;
 }
 
+.error-banner {
+  background: #fef3e2;
+  border: 1px solid #e67e22;
+  color: #d35400;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -248,31 +317,84 @@ onMounted(loadData)
   font-weight: 500;
 }
 
-.value.warning {
-  color: #e67e22;
+/* Type badges */
+.type-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
 }
 
+.type-badge.torniquete {
+  background: #e8f4fd;
+  color: #2980b9;
+}
+
+.type-badge.transbank {
+  background: #f3e8fd;
+  color: #8e44ad;
+}
+
+/* Status badges */
 .status-badge {
   padding: 0.25rem 0.75rem;
   border-radius: 20px;
   font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: capitalize;
 }
 
-.status-badge.activo { background: #e8f4fd; color: #3498db; }
-.status-badge.alerta { background: #fde8e8; color: #e74c3c; }
-.status-badge.óptimo { background: #e8f8f0; color: #27ae60; }
-
-.risk-badge {
-  padding: 0.25rem 0.75rem;
-  border-radius: 4px;
-  font-weight: 600;
-  font-size: 0.85rem;
+.status-badge.status-operational {
+  background: #e8f8f0;
+  color: #27ae60;
 }
 
-.risk-badge.critico { background: #fde8e8; color: #e74c3c; }
-.risk-badge.alto { background: #fef3e2; color: #e67e22; }
-.risk-badge.medio { background: #fef9e7; color: #b7950b; }
-.risk-badge.bajo { background: #e8f8f0; color: #27ae60; }
+.status-badge.status-failure {
+  background: #fde8e8;
+  color: #e74c3c;
+}
+
+.status-badge.status-maintenance {
+  background: #fef3e2;
+  color: #e67e22;
+}
+
+/* Stats card */
+.stats-card .stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  text-align: center;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+/* Uptime colors */
+.uptime-excellent { color: #27ae60; }
+.uptime-good { color: #2ecc71; }
+.uptime-warning { color: #e67e22; }
+.uptime-critical { color: #e74c3c; }
+
+.failure-count { color: #e74c3c; }
+
+/* Prediction card */
+.prediction-content {
+  padding: 1rem 0;
+}
 
 .prediction-main {
   display: flex;
@@ -291,10 +413,13 @@ onMounted(loadData)
   background: #f0f2f5;
 }
 
-.probability-circle.critico { background: #fde8e8; }
-.probability-circle.alto { background: #fef3e2; }
-.probability-circle.medio { background: #fef9e7; }
-.probability-circle.bajo { background: #e8f8f0; }
+.probability-circle.high {
+  background: #fde8e8;
+}
+
+.probability-circle.low {
+  background: #e8f8f0;
+}
 
 .probability-value {
   font-size: 1.75rem;
@@ -310,13 +435,14 @@ onMounted(loadData)
   flex: 1;
 }
 
+/* Actions */
 .actions-section {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
 }
 
-.btn-primary, .btn-secondary, .btn-outline {
+.btn-primary, .btn-secondary {
   padding: 0.75rem 1.5rem;
   border-radius: 8px;
   font-size: 1rem;
@@ -335,13 +461,7 @@ onMounted(loadData)
   color: white;
 }
 
-.btn-outline {
-  background: white;
-  border: 2px solid #667eea;
-  color: #667eea;
-}
-
-.btn-primary:hover, .btn-secondary:hover, .btn-outline:hover {
+.btn-primary:hover, .btn-secondary:hover {
   transform: translateY(-2px);
 }
 

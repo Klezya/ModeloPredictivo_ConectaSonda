@@ -3,25 +3,13 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 export interface Equipment {
   id: number
   name: string
-  type: string
+  type: 'torniquete' | 'transbank'
   location: string
-  status: string
+  status: 'operativo' | 'falla' | 'mantenimiento'
   last_maintenance: string
   last_failure: string
   failure_count: number
   uptime: number
-}
-
-export interface Prediction {
-  id: number
-  equipment_id: number
-  equipment_name: string
-  location: string
-  risk_level: string
-  probability: number
-  predicted_failure: string
-  estimated_time: string
-  status: string
 }
 
 export interface Metrics {
@@ -37,7 +25,6 @@ export interface FailureHistory {
   id: number
   date: string
   equipment: string
-  failure_type: string
   resolved: boolean
 }
 
@@ -56,8 +43,6 @@ export interface PredictionResult {
   equipment_id: number
   equipment_name: string
   probability: number
-  risk_level: string
-  predicted_failure: string
   confidence: number
   timestamp: string
 }
@@ -89,22 +74,13 @@ class ApiService {
   }
 
   // Equipos
-  async getEquipments(): Promise<Equipment[]> {
-    return this.request<Equipment[]>('/api/equipments')
+  async getEquipments(equipmentType?: string): Promise<Equipment[]> {
+    const query = equipmentType && equipmentType !== 'all' ? `?equipment_type=${equipmentType}` : ''
+    return this.request<Equipment[]>(`/api/equipments${query}`)
   }
 
   async getEquipment(id: number): Promise<Equipment> {
     return this.request<Equipment>(`/api/equipments/${id}`)
-  }
-
-  // Predicciones
-  async getPredictions(riskLevel?: string): Promise<Prediction[]> {
-    const query = riskLevel && riskLevel !== 'all' ? `?risk_level=${riskLevel}` : ''
-    return this.request<Prediction[]>(`/api/predictions${query}`)
-  }
-
-  async getPrediction(id: number): Promise<Prediction> {
-    return this.request<Prediction>(`/api/predictions/${id}`)
   }
 
   // Historial de Fallas
